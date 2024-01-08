@@ -112,12 +112,12 @@ class RNN(nn.Module):
             input_ = (
                 torch.hstack(
                     (
+                        prev_rew[:, None].to(self.device),
                         (
                             torch.zeros([len(prev_act), 2]).to(self.device)
                             if torch.all(prev_act == -1)
                             else torch.nn.functional.one_hot(prev_act, num_classes=2)
                         ),
-                        prev_rew[:, None].to(self.device),
                     )
                 )
                 .to(torch.float32)
