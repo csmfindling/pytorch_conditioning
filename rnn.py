@@ -74,9 +74,9 @@ class RNN(nn.Module):
         self.entropy_level = entropy_level
         self.training_on_restless = training_on_restless
         self.loaded_existing_model = loaded_existing_model
-        if torch.backends.mps.is_available() and False:
+        if False and (torch.cuda.is_available() or torch.backends.mps.is_available()):
             print("moving to mps")
-            self.device = torch.device("mps")
+            self.device = torch.device("cuda:0")
         else:
             self.device = torch.device("cpu")
         self.non_linearity = non_linearity
@@ -113,11 +113,11 @@ class RNN(nn.Module):
                 torch.hstack(
                     (
                         (
-                            torch.zeros([len(prev_act), 2])
+                            torch.zeros([len(prev_act), 2]).to(self.device)
                             if torch.all(prev_act == -1)
                             else torch.nn.functional.one_hot(prev_act, num_classes=2)
                         ),
-                        prev_rew[:, None],
+                        prev_rew[:, None].to(self.device),
                     )
                 )
                 .to(torch.float32)
@@ -140,7 +140,7 @@ class RNN(nn.Module):
                     n_parallel,
                     self.num_units,
                 ),
-            )
+            ).to(self.device)
         h = self.f_non_linearity(h)
         return torch.nn.Softmax(dim=1)(torch.matmul(h, self.W_out)), h
 
@@ -156,7 +156,7 @@ class RNN(nn.Module):
         chosen_actions = torch.zeros([num_steps, n_parallel], dtype=int)
         for i_trial in range(rewards.size()[0]):
             pActions, h = self.forward(act, rew, h, n_parallel)
-            act = (torch.rand(size=(n_parallel,)) > pActions[:, 0]) * 1
+            act = (torch.rand(size=(n_parallel,)).to(self.device) > pActions[:, 0]) * 1
             rew = torch.FloatTensor(
                 [rewards[i_trial, i, act[i]] for i in range(n_parallel)]
             )
@@ -284,13 +284,28 @@ if __name__ == "__main__":
     import sys
 
     try:
-        simul_id = int(sys.argv[1]) - 1
+        run_id = int(sys.argv[1]) - 1
     except:
-        simul_id = 21
+        run_id = 22
+
+    nb_simuls = 30
+    noise_levels = [
+        # 0,
+        # 0.2,
+        0.5,
+        # 0.8,
+        # 1.2,
+        # 1.5,
+    ]
+
+    nb_noise_levels = len(noise_levels)
+
+    simul_id = int(run_id / nb_noise_levels)
+    noise_id = run_id % nb_noise_levels
 
     self = RNN(
         entropy_level=-1,
-        noise_level=0,
+        noise_level=noise_levels[noise_id],
         nb_max_epochs=50000,
         gamma=0.5,
         simul_id=simul_id,
