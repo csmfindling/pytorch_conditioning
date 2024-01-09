@@ -36,7 +36,25 @@ def generate_task(n_parallel, num_steps, restless=True):
             rewards = np.zeros([num_steps, n_parallel, 2])
             rewards[:, :, 0] = truncnorm.rvs(a, b, loc=proba_r, scale=std_obs_noise)
             rewards[:, :, 1] = 1 - rewards[:, :, 0]
-            if np.abs(rewards[:, :, 1].mean() - rewards[:, :, 0].mean()) < 0.001:
+
+            highest = (proba_r[0] < 0.5) * 1
+            if (
+                (np.abs(rewards[:, :, 1].mean() - rewards[:, :, 0].mean()) < 0.001)
+                and (
+                    (
+                        rewards[:, highest == 0][:, :, 0]
+                        < rewards[:, highest == 0][:, :, 1]
+                    ).mean()
+                    >= 0.05
+                )
+                and (
+                    (
+                        rewards[:, highest == 1][:, :, 1]
+                        < rewards[:, highest == 1][:, :, 0]
+                    ).mean()
+                    >= 0.05
+                )
+            ):
                 break
     return (torch.from_numpy(rewards)) * 2.0 - 1.0
 
@@ -288,7 +306,6 @@ if __name__ == "__main__":
     except:
         run_id = 22
 
-    nb_simuls = 30
     noise_levels = [
         # 0,
         # 0.2,
