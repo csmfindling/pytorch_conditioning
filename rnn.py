@@ -288,14 +288,13 @@ if __name__ == "__main__":
     except:
         run_id = 22
 
-    nb_simuls = 30
     noise_levels = [
-        # 0,
-        # 0.2,
+        0,
+        0.2,
         0.5,
-        # 0.8,
-        # 1.2,
-        # 1.5,
+        0.8,
+        1.2,
+        1.5,
     ]
 
     nb_noise_levels = len(noise_levels)
