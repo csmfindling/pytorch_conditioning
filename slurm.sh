@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=rnn
-#SBATCH --output=logs/slurm/decoding.%A.%a.out
-#SBATCH --error=logs/slurm/decoding.%A.%a.err
+#SBATCH --output=logs/slurm/rnn.%A.%a.out
+#SBATCH --error=logs/slurm/rnn.%A.%a.err
 #SBATCH --partition=shared-cpu
 #SBATCH --array=1-180
 #SBATCH --mem=7000
