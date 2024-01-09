@@ -7,6 +7,7 @@ import scipy
 from torch.utils.tensorboard import SummaryWriter
 from pathlib import Path
 import os
+from scipy.stats import beta
 
 
 def normalized_columns_initializer(shape, std=1.0):
@@ -16,7 +17,10 @@ def normalized_columns_initializer(shape, std=1.0):
 
 
 def generate_task(n_parallel, num_steps, restless=True):
-    proba_r = np.zeros([num_steps, n_parallel]) + 0.5
+    proba_r = np.zeros([num_steps, n_parallel])
+    proba_r[:] = np.random.choice(
+        [0.05, 0.95] * int(n_parallel / 2), size=n_parallel, replace=False
+    )
     if restless:
         std_obs_noise = 0.153
         for i in range(1, num_steps):
@@ -29,12 +33,16 @@ def generate_task(n_parallel, num_steps, restless=True):
     else:
         while True:
             proba_r[:] = np.random.choice(
-                [0.05, 0.95] * int(n_parallel / 2), size=n_parallel, replace=False
+                [0.1, 0.9] * int(n_parallel / 2), size=n_parallel, replace=False
             )
-            std_obs_noise = 0.238
-            a, b = (0 - proba_r) / std_obs_noise, (1 - proba_r) / std_obs_noise
+            std_obs_noise = 0.2
+            precision = 2.1
+            a = proba_r * precision
+            b = precision - a
+            # a, b = (0 - proba_r) / std_obs_noise, (1 - proba_r) / std_obs_noise
             rewards = np.zeros([num_steps, n_parallel, 2])
-            rewards[:, :, 0] = truncnorm.rvs(a, b, loc=proba_r, scale=std_obs_noise)
+            # rewards[:, :, 0] = truncnorm.rvs(a, b, loc=proba_r, scale=std_obs_noise)
+            rewards[:, :, 0] = beta.rvs(a, b)
             rewards[:, :, 1] = 1 - rewards[:, :, 0]
 
             highest = (proba_r[0] < 0.5) * 1
@@ -280,9 +288,15 @@ class RNN(nn.Module):
             plt.show()
         return cum_rewards if train else (cum_reward, observed_rewards, chosen_actions)
 
-    def load(self, verbose=False):
-        if (self.path_to_weights / self.model_name).exists():
-            self.load_state_dict(torch.load(self.path_to_weights / self.model_name))
+    def load(self, path=None, verbose=False):
+        if (
+            path if path is not None else self.path_to_weights / self.model_name
+        ).exists():
+            self.load_state_dict(
+                torch.load(
+                    path if path is not None else self.path_to_weights / self.model_name
+                )
+            )
             if verbose:
                 print("RNN was loaded")
         else:
