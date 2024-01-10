@@ -18,10 +18,12 @@ def normalized_columns_initializer(shape, std=1.0):
 
 def generate_task(n_parallel, num_steps, restless=True):
     proba_r = np.zeros([num_steps, n_parallel])
-    proba_r[:] = np.random.choice(
-        [0.05, 0.95] * int(n_parallel / 2), size=n_parallel, replace=False
-    )
     if restless:
+        proba_r[:] = np.random.choice(
+            [0.05, 0.95] * (int(n_parallel / 2) if n_parallel > 1 else 1),
+            size=n_parallel,
+            replace=False,
+        )
         std_obs_noise = 0.153
         for i in range(1, num_steps):
             a, b = (0 - proba_r[i - 1]) / 0.108, (1 - proba_r[i - 1]) / 0.108
@@ -48,7 +50,11 @@ def generate_task(n_parallel, num_steps, restless=True):
                 < 0.01
             ):
                 break
+        rewards = rewards[:, None]
         """
+        proba_r[:] = np.random.choice(
+            [0.05, 0.95] * int(n_parallel / 2), size=n_parallel, replace=False
+        )        
         while True:
             proba_r[:] = np.random.choice(
                 [0.1, 0.9] * int(n_parallel / 2), size=n_parallel, replace=False
@@ -221,7 +227,7 @@ class RNN(nn.Module):
             self.reset_weights()
             optimizer = RMSprop(self.parameters(), lr=1e-4)
             writer = SummaryWriter("runs/" + self.model_name, flush_secs=1)
-            n_parallel, num_steps = 10, 100
+            n_parallel, num_steps = 1, 100
         else:
             num_steps, n_parallel, _ = rewards.shape
 
