@@ -31,6 +31,24 @@ def generate_task(n_parallel, num_steps, restless=True):
         rewards[:, :, 0] = truncnorm.rvs(a, b, loc=proba_r, scale=std_obs_noise)
         rewards[:, :, 1] = 1 - rewards[:, :, 0]
     else:
+        k = 0.05
+        rand_int = np.random.randint(2)
+        proba_r = np.zeros(num_steps)
+        proba_r[:] = (k) * (rand_int == 0) + (1.0 - k) * (rand_int == 1)
+        rewards = np.zeros([num_steps, 2])
+        while True:
+            random_numb = np.random.rand(num_steps)
+            rewards[:, 0] = (proba_r < random_numb) * 1.0
+            rewards[:, 1] = (proba_r >= random_numb) * 1.0
+            if (
+                np.abs(
+                    rewards[:, 1].mean()
+                    - ((0.0 + k) * (rand_int == 0) + (1.0 - k) * (rand_int == 1))
+                )
+                < 0.01
+            ):
+                break
+        """
         while True:
             proba_r[:] = np.random.choice(
                 [0.1, 0.9] * int(n_parallel / 2), size=n_parallel, replace=False
@@ -49,21 +67,14 @@ def generate_task(n_parallel, num_steps, restless=True):
             if (
                 (np.abs(rewards[:, :, 1].mean() - rewards[:, :, 0].mean()) < 0.001)
                 and (
-                    (
-                        rewards[:, highest == 0][:, :, 0]
-                        < rewards[:, highest == 0][:, :, 1]
-                    ).mean()
-                    >= 0.05
+                    (rewards[:, highest == 0][:, :, 0] < rewards[:, highest == 0][:, :, 1]).mean() >= 0.05
                 )
                 and (
-                    (
-                        rewards[:, highest == 1][:, :, 1]
-                        < rewards[:, highest == 1][:, :, 0]
-                    ).mean()
-                    >= 0.05
+                    (rewards[:, highest == 1][:, :, 1] < rewards[:, highest == 1][:, :, 0]).mean() >= 0.05
                 )
             ):
                 break
+        """
     return (torch.from_numpy(rewards)) * 2.0 - 1.0
 
 
