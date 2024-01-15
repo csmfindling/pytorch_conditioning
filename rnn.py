@@ -8,80 +8,13 @@ from torch.utils.tensorboard import SummaryWriter
 from pathlib import Path
 import os
 from scipy.stats import beta
+from generate_task import generate_task
 
 
 def normalized_columns_initializer(shape, std=1.0):
     out = np.random.randn(*shape).astype(np.float32)
     out *= std / np.sqrt(np.square(out).sum(axis=0, keepdims=True))
     return torch.from_numpy(out)
-
-
-def generate_task(n_parallel, num_steps, restless=True):
-    proba_r = np.zeros([num_steps, n_parallel])
-    if restless:
-        proba_r[:] = np.random.choice(
-            [0.05, 0.95] * (int(n_parallel / 2) if n_parallel > 1 else 1),
-            size=n_parallel,
-            replace=False,
-        )
-        std_obs_noise = 0.153
-        for i in range(1, num_steps):
-            a, b = (0 - proba_r[i - 1]) / 0.108, (1 - proba_r[i - 1]) / 0.108
-            proba_r[i] = truncnorm.rvs(a, b, loc=proba_r[i - 1], scale=0.108)
-        a, b = (0 - proba_r) / std_obs_noise, (1 - proba_r) / std_obs_noise
-        rewards = np.zeros([num_steps, n_parallel, 2])
-        rewards[:, :, 0] = truncnorm.rvs(a, b, loc=proba_r, scale=std_obs_noise)
-        rewards[:, :, 1] = 1 - rewards[:, :, 0]
-    else:
-        k = 0.05
-        rand_int = np.random.randint(2)
-        proba_r = np.zeros(num_steps)
-        proba_r[:] = (k) * (rand_int == 0) + (1.0 - k) * (rand_int == 1)
-        rewards = np.zeros([num_steps, 2])
-        while True:
-            random_numb = np.random.rand(num_steps)
-            rewards[:, 0] = (proba_r < random_numb) * 1.0
-            rewards[:, 1] = (proba_r >= random_numb) * 1.0
-            if (
-                np.abs(
-                    rewards[:, 1].mean()
-                    - ((0.0 + k) * (rand_int == 0) + (1.0 - k) * (rand_int == 1))
-                )
-                < 0.01
-            ):
-                break
-        rewards = rewards[:, None]
-        """
-        proba_r[:] = np.random.choice(
-            [0.05, 0.95] * int(n_parallel / 2), size=n_parallel, replace=False
-        )        
-        while True:
-            proba_r[:] = np.random.choice(
-                [0.1, 0.9] * int(n_parallel / 2), size=n_parallel, replace=False
-            )
-            std_obs_noise = 0.2
-            precision = 2.1
-            a = proba_r * precision
-            b = precision - a
-            # a, b = (0 - proba_r) / std_obs_noise, (1 - proba_r) / std_obs_noise
-            rewards = np.zeros([num_steps, n_parallel, 2])
-            # rewards[:, :, 0] = truncnorm.rvs(a, b, loc=proba_r, scale=std_obs_noise)
-            rewards[:, :, 0] = beta.rvs(a, b)
-            rewards[:, :, 1] = 1 - rewards[:, :, 0]
-
-            highest = (proba_r[0] < 0.5) * 1
-            if (
-                (np.abs(rewards[:, :, 1].mean() - rewards[:, :, 0].mean()) < 0.001)
-                and (
-                    (rewards[:, highest == 0][:, :, 0] < rewards[:, highest == 0][:, :, 1]).mean() >= 0.05
-                )
-                and (
-                    (rewards[:, highest == 1][:, :, 1] < rewards[:, highest == 1][:, :, 0]).mean() >= 0.05
-                )
-            ):
-                break
-        """
-    return (torch.from_numpy(rewards)) * 2.0 - 1.0
 
 
 def discount(x, gamma):
@@ -100,7 +33,8 @@ class RNN(nn.Module):
         simul_id=0,
         non_linearity="tanh",
         loaded_existing_model=False,
-        training_on_restless=True,
+        training_task="conditioning",
+        path_to_weights="weights",
     ):
         super(RNN, self).__init__()
         self.num_units = num_units
@@ -115,7 +49,7 @@ class RNN(nn.Module):
         self.W_out = torch.nn.Parameter(torch.randn([self.num_units, 2]))
         self.noise_level = noise_level
         self.entropy_level = entropy_level
-        self.training_on_restless = training_on_restless
+        self.training_task = training_task
         self.loaded_existing_model = loaded_existing_model
         if False and (torch.cuda.is_available() or torch.backends.mps.is_available()):
             print("moving to mps")
@@ -129,15 +63,15 @@ class RNN(nn.Module):
             torch.nn.Tanh() if self.non_linearity == "tanh" else torch.nn.ReLU()
         )
         self.to(device=self.device)
-        self.path_to_weights = Path("weights")
+        self.path_to_weights = Path(path_to_weights)
         self.path_to_weights.mkdir(exist_ok=True)
-        self.model_name = "noise_level_{}_entropy_level_{}_simul_id_{}_inputSize_{}_activation_{}_restlessTraining_{}".format(
+        self.model_name = "noise_level_{}_entropy_level_{}_simul_id_{}_inputSize_{}_activation_{}_trainTask_{}".format(
             str(self.noise_level).replace(".", "_"),
             str(self.entropy_level).replace(".", "_"),
             str(simul_id),
             str(self.input_size),
             self.non_linearity,
-            self.training_on_restless * 1,
+            self.training_task,
         )
 
     def reset_weights(self):
@@ -227,7 +161,7 @@ class RNN(nn.Module):
             self.reset_weights()
             optimizer = RMSprop(self.parameters(), lr=1e-4)
             writer = SummaryWriter("runs/" + self.model_name, flush_secs=1)
-            n_parallel, num_steps = 1, 100
+            n_parallel, num_steps = 20, 100
         else:
             num_steps, n_parallel, _ = rewards.shape
 
@@ -240,7 +174,7 @@ class RNN(nn.Module):
                 rewards = generate_task(
                     n_parallel=n_parallel,
                     num_steps=num_steps,
-                    restless=self.training_on_restless,
+                    task=self.training_task,
                 )
 
             cum_reward, observed_rewards, chosen_actions, policies = self.rnn(rewards)
@@ -275,7 +209,7 @@ class RNN(nn.Module):
             cum_rewards.append(cum_reward.mean())
             if i_epoch % 1000 == 0 and train:
                 test_rewards = generate_task(
-                    n_parallel=n_parallel, num_steps=num_steps, restless=True
+                    n_parallel=n_parallel, num_steps=num_steps, task="behrens"
                 )
                 cum_reward_test, _, _, _ = self.rnn(test_rewards)
                 print("current cumulative rewards : {}".format(cum_reward_test.mean()))
@@ -338,12 +272,12 @@ if __name__ == "__main__":
         run_id = 22
 
     noise_levels = [
-        0,
-        0.2,
+        # 0,
+        # 0.2,
         0.5,
-        0.8,
-        1.2,
-        1.5,
+        # 0.8,
+        # 1.2,
+        # 1.5,
     ]
 
     nb_noise_levels = len(noise_levels)
@@ -359,7 +293,7 @@ if __name__ == "__main__":
         simul_id=simul_id,
         input_size=3,
         non_linearity="tanh",
-        training_on_restless=False,
+        training_task="behrens",
     )
 
     cum_rewards = self.play(rewards=None, train=True, plot_results=False)
