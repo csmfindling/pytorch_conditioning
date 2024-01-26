@@ -78,8 +78,6 @@ class RNN(nn.Module):
         with torch.no_grad():
             torch.nn.init.xavier_uniform(self.W_rec)
             torch.nn.init.xavier_uniform(self.W_in)
-            # torch.nn.init.xavier_uniform(self.W_out)
-            # torch.nn.init.xavier_uniform(self.b_rec)
             self.W_out[:] = normalized_columns_initializer(self.W_out.shape, 0.01)
             self.b_rec[:] = 0
 
