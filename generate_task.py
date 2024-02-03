@@ -54,8 +54,8 @@ def generate_task(n_parallel, num_steps, task="conditioning", return_full=False)
             else:
                 proba_r[i, with_volatility] = proba_r[i - 1, with_volatility]
 
-        random_numb = np.random.rand(num_steps, n_parallel)
         while True:
+            random_numb = np.random.rand(num_steps, n_parallel)
             rewards = np.zeros([num_steps, n_parallel, 2])
             rewards[:, :, 0] = (proba_r < random_numb) * 1.0
             rewards[:, :, 1] = (proba_r >= random_numb) * 1.0
@@ -65,8 +65,8 @@ def generate_task(n_parallel, num_steps, task="conditioning", return_full=False)
                         rewards[:, ~with_volatility, 0]
                         == (proba_r[:, ~with_volatility] > 0.5)
                     ).mean()
-                    - 0.2
                 )
+                - 0.2
                 < 0.001
             ) and (
                 np.abs(
@@ -74,8 +74,8 @@ def generate_task(n_parallel, num_steps, task="conditioning", return_full=False)
                         rewards[:, with_volatility, 0]
                         == (proba_r[:, with_volatility] > 0.5)
                     ).mean()
-                    - 0.2
                 )
+                - 0.2
                 < 0.001
             ):
                 break
