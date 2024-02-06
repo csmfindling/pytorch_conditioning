@@ -97,11 +97,20 @@ def generate_task(n_parallel, num_steps, task="conditioning", return_full=False)
             size=n_parallel,
             replace=False,
         )
-        for i in range(1, num_steps):
-            randn = np.random.rand(vols[i].size)
-            proba_r[i] = proba_r[i - 1] * (randn > vols[i]) + (1 - proba_r[i - 1]) * (
-                randn <= vols[i]
-            )
+        for j in range(n_parallel):
+            while True:
+                for i in range(1, num_steps):
+                    randn = np.random.rand()
+                    proba_r[i, j] = proba_r[i - 1, j] * (randn > vols[i, j]) + (
+                        1 - proba_r[i - 1, j]
+                    ) * (randn <= vols[i, j])
+
+                nb_expected_reversals = (vols[:, j] == 0.04).sum() * 0.04
+                if np.all(
+                    (proba_r[1:, j] != proba_r[:-1, j]).sum() == nb_expected_reversals
+                ):
+                    break
+
         rewards = np.zeros([num_steps, n_parallel, 2])
         for j in range(n_parallel):
             rew_ = np.zeros([num_steps, 2])
