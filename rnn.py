@@ -159,7 +159,7 @@ class RNN(nn.Module):
             self.reset_weights()
             optimizer = RMSprop(self.parameters(), lr=1e-4)
             writer = SummaryWriter("runs/" + self.model_name, flush_secs=1)
-            n_parallel, num_steps = 20, 100
+            n_parallel, num_steps = 100, 100
         else:
             num_steps, n_parallel, _ = rewards.shape
 
