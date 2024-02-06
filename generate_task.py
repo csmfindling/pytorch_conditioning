@@ -39,7 +39,7 @@ def generate_task(n_parallel, num_steps, task="conditioning", return_full=False)
             ):
                 break
         rewards = rewards[:, None]
-    elif task == "behrens":
+    elif task == "behrens_legacy":
         proba_r = np.zeros([num_steps, n_parallel])
         proba_r[:] = np.random.choice(
             [0.2, 0.8, -0.2, -0.8] * (int(n_parallel / 4) if n_parallel > 1 else 1),
@@ -79,6 +79,42 @@ def generate_task(n_parallel, num_steps, task="conditioning", return_full=False)
                 < 0.001
             ):
                 break
+    elif task == "behrens":
+        vol_at_trial0 = np.random.choice(
+            [0, 0.04] * (int(n_parallel / 2) if n_parallel > 1 else 1),
+            size=n_parallel,
+            replace=False,
+        )
+        vols = np.vstack(
+            (
+                np.tile(vol_at_trial0[None], (int(num_steps / 2), 1)),
+                np.tile(0.04 - vol_at_trial0[None], (int(num_steps / 2), 1)),
+            )
+        )
+        proba_r = np.zeros([num_steps, n_parallel])
+        proba_r[0] = np.random.choice(
+            [0.2, 0.8] * (int(n_parallel / 2) if n_parallel > 1 else 1),
+            size=n_parallel,
+            replace=False,
+        )
+        for i in range(1, num_steps):
+            randn = np.random.rand(vols[i].size)
+            proba_r[i] = proba_r[i - 1] * (randn > vols[i]) + (1 - proba_r[i - 1]) * (
+                randn <= vols[i]
+            )
+        rewards = np.zeros([num_steps, n_parallel, 2])
+        for j in range(n_parallel):
+            rew_ = np.zeros([num_steps, 2])
+            while True:
+                random_numb = np.random.rand(num_steps)
+                rew_[:, 0] = (proba_r[:, j] < random_numb) * 1.0
+                rew_[:, 1] = (proba_r[:, j] >= random_numb) * 1.0
+                if np.all(
+                    np.abs((rew_[:, 0] == (proba_r[:, j] > 0.5)).mean(axis=0) - 0.2)
+                    < 0.01
+                ):
+                    break
+            rewards[:, j] = rew_
     else:
         raise NotImplementedError
     if return_full:
@@ -89,3 +125,4 @@ def generate_task(n_parallel, num_steps, task="conditioning", return_full=False)
 if __name__ == "__main__":
     n_parallel = 10
     num_steps = 100
+    task = "behrens"

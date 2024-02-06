@@ -179,14 +179,17 @@ class RNN(nn.Module):
 
             if train:
                 discounted_rewards = discount(observed_rewards.numpy(), self.gamma)[:-1]
-                loss = -sum(
-                    [
-                        torch.log(policies[i, j, chosen_actions[i, j]] + 1e-7)
-                        * discounted_rewards[i, j]
-                        for j in range(n_parallel)
-                        for i in range(num_steps)
-                    ]
-                ) / (num_steps * n_parallel)
+                loss = (
+                    -sum(
+                        [
+                            torch.log(policies[i, j, chosen_actions[i, j]] + 1e-7)
+                            * discounted_rewards[i, j]
+                            for j in range(n_parallel)
+                            for i in range(num_steps)
+                        ]
+                    )
+                    / n_parallel
+                )
                 entropy = (torch.log(policies + 1e-7) * policies).mean()
                 if self.with_entropy:
                     loss += entropy * self.entropy_level
