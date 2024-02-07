@@ -4,7 +4,7 @@ import torch
 
 
 def generate_task(n_parallel, num_steps, task="conditioning", return_full=False):
-    assert task in ["conditioning", "restless_continuous", "behrens"]
+    assert task in ["conditioning", "restless_continuous", "behrens", "behrens_legacy"]
     if task == "restless_continuous":
         mean_r = np.zeros([num_steps, n_parallel])
         mean_r[:] = np.random.choice(
