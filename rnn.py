@@ -273,7 +273,7 @@ if __name__ == "__main__":
         run_id = 22
 
     noise_levels = [
-        # 0,
+        0,
         # 0.2,
         0.5,
         # 0.8,
