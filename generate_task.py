@@ -1,10 +1,35 @@
 import numpy as np
 from scipy.stats import truncnorm
 import torch
+import glob
+import pickle
 
 
 def generate_task(n_parallel, num_steps, task="conditioning", return_full=False):
-    assert task in ["conditioning", "restless_continuous", "behrens", "behrens_legacy"]
+    assert task in [
+        "conditioning",
+        "restless_continuous",
+        "behrens",
+        "behrens_legacy",
+        "restless_online",
+    ]
+    if task == "restless_online":
+        files = glob.glob(
+            "/Users/csmfindling/Documents/Postdoc-Geneva/reliability_VW/theo//rlnoise_online/data/fulldata_complete0*"
+        )
+        rewards = np.zeros([num_steps, n_parallel, 2])
+        for i_f, f in enumerate(files[:n_parallel]):
+            game = pickle.load(open(f, "rb"), encoding="latin1")
+            rewards[:, i_f] = (
+                np.vstack(
+                    (
+                        game["reward_1"][game["blocks"] == 1],
+                        game["reward_2"][game["blocks"] == 1],
+                    )
+                ).T
+                / 100.0
+            )
+        return 2 * torch.from_numpy(rewards) - 1, None
     if task == "restless_continuous":
         mean_r = np.zeros([num_steps, n_parallel])
         mean_r[:] = np.random.choice(
@@ -20,6 +45,7 @@ def generate_task(n_parallel, num_steps, task="conditioning", return_full=False)
         rewards = np.zeros([num_steps, n_parallel, 2])
         rewards[:, :, 0] = truncnorm.rvs(a, b, loc=mean_r, scale=std_obs_noise)
         rewards[:, :, 1] = 1 - rewards[:, :, 0]
+        proba_r = None
     elif task == "conditioning":
         k = 0.05
         rand_int = np.random.randint(2)

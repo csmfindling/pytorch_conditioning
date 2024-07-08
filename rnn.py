@@ -126,7 +126,7 @@ class RNN(nn.Module):
         act, rew = torch.zeros(n_parallel, dtype=torch.long) - 1, torch.zeros(
             n_parallel
         )
-        observed_rewards = torch.zeros([num_steps + 1, n_parallel])
+        observed_rewards = torch.zeros([num_steps, n_parallel])
         policies = torch.zeros_like(rewards)
         chosen_actions = torch.zeros([num_steps, n_parallel], dtype=int)
         for i_trial in range(rewards.size()[0]):
