@@ -52,11 +52,7 @@ class RNN(nn.Module):
         self.entropy_level = entropy_level
         self.training_task = training_task
         self.loaded_existing_model = loaded_existing_model
-        if False and (torch.cuda.is_available() or torch.backends.mps.is_available()):
-            print("moving to mps")
-            self.device = torch.device("cuda:0")
-        else:
-            self.device = torch.device("cpu")
+        self.device = torch.device("cpu")
         self.non_linearity = non_linearity
         if self.non_linearity not in ["relu", "tanh"]:
             raise AssertionError("nonlinearity can only be relu and tanh")
@@ -153,7 +149,7 @@ class RNN(nn.Module):
             
         return cum_reward, observed_rewards, chosen_actions, policies, values
 
-    def play(self, rewards=None, train=True, plot_results=False):
+    def play(self, rewards=None, train=True):
         if (
             os.path.exists(self.path_to_weights / self.model_name)
             and self.loaded_existing_model
@@ -206,7 +202,7 @@ class RNN(nn.Module):
                 entropy = (torch.log(policies + 1e-7) * policies).mean()
                 
                 # Combined loss
-                loss = policy_loss + 0.5 * value_loss * (1. * self.actor_critic)
+                loss = policy_loss + 10 * value_loss * (1. * self.actor_critic)
                 if self.with_entropy:
                     loss += entropy * self.entropy_level
                 
@@ -221,27 +217,9 @@ class RNN(nn.Module):
                 
                 losses.append(loss.detach())
             cum_rewards.append(cum_reward.mean())
-            if i_epoch % 1000 == 0 and train:
-                torch.save(self.state_dict(), self.path_to_weights / self.model_name)
         
         cum_rewards = torch.tensor(cum_rewards)
 
-        if plot_results and train:
-            from matplotlib import pyplot as plt
-
-            maximum_oracle = torch.max(rewards, axis=1).values.sum()
-            plt.figure()
-            plt.plot(cum_rewards, label="rnn")
-            plt.plot(
-                plt.gca().get_xlim(),
-                [maximum_oracle, maximum_oracle],
-                "--",
-                label="oracle",
-            )
-            plt.xlabel("epoch number")
-            plt.ylabel("rewards")
-            plt.legend()
-            plt.show()
         return cum_rewards if train else (cum_reward, observed_rewards, chosen_actions)
 
     def load(self, path=None, verbose=False):
@@ -270,32 +248,22 @@ class RNN(nn.Module):
 
 if __name__ == "__main__":
     import sys
-
-    try:
-        run_id = int(sys.argv[1]) - 1
-    except:
-        run_id = 10
-
-    noise_levels = [0.5]
-
-    nb_noise_levels = len(noise_levels)
-
-    simul_id = int(run_id / nb_noise_levels)
-    noise_id = run_id % nb_noise_levels
+    run_id = 2
+    noise_level = 0.5
 
     self = RNN(
         entropy_level=-1,
-        noise_level=noise_levels[noise_id],
-        nb_max_epochs=100000,
-        gamma=0.5,
-        simul_id=simul_id,
+        noise_level=noise_level,
+        nb_max_epochs=10000,
+        gamma=0.,
+        simul_id=run_id,
         input_size=2,
         non_linearity="tanh",
         training_task="dependent_continuous",
-        actor_critic=False,
+        actor_critic=True,
     )
 
-    cum_rewards = self.play(rewards=None, train=True, plot_results=False)
+    cum_rewards = self.play(rewards=None, train=True)
 
     # save model
     from scipy.io import savemat
@@ -307,47 +275,5 @@ if __name__ == "__main__":
     dic["weights_output_value"] = self.W_value.detach().numpy()
     dic["regul_type"] = "white"
     dic["regul_coeff"] = self.noise_level
-    dic["idx_simul"] = simul_id
-    savemat("/Users/csmfindling/Documents/Postdoc-Geneva/reliability_VW/theo/pytorch_conditioning/weights/weights_mat/" + self.model_name, dic)
-
-
-    """
-    import dask
-    from dask.distributed import Client, progress
-
-    client = Client(threads_per_worker=4, n_workers=4)
-    # client.shutdown()
-
-    def train_RNN(args):
-        noise_level, simul_id = args
-        self = RNN(
-            entropy_level=-1,
-            noise_level=noise_level,
-            nb_max_epochs=100000,
-            gamma=0.5,
-            simul_id=simul_id,
-            input_size=3,
-            non_linearity="tanh",
-            training_on_restless=False,
-        )
-
-        cum_rewards = self.play(rewards=None, train=True, plot_results=False)
-        return cum_rewards
-
-    futures = []
-    nb_simuls = 15
-    noise_levels = [
-        0,
-        0.2,
-        0.5,
-        0.8,
-        1.2,
-        1.5,
-    ]  # [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.2, 1.5, 2]
-    for i_s in range(nb_simuls):
-        for noise_level in noise_levels:
-            future = client.submit(train_RNN, [noise_level, i_s])
-            futures.append(future)
-
-    results = client.gather(futures)  # futures #
-    """
+    dic["idx_simul"] = run_id
+    savemat("/Users/vwyart/Documents/RLCOR/pytorch_conditioning/weights/" + self.model_name, dic)
