@@ -33,8 +33,9 @@ class RNN(nn.Module):
         simul_id=0,
         non_linearity="tanh",
         loaded_existing_model=False,
-        training_task="conditioning",
+        training_task="dependent_continuous",
         path_to_weights="weights",
+        actor_critic=True,
     ):
         super(RNN, self).__init__()
         self.num_units = num_units
@@ -65,7 +66,9 @@ class RNN(nn.Module):
         self.to(device=self.device)
         self.path_to_weights = Path(path_to_weights)
         self.path_to_weights.mkdir(exist_ok=True)
-        self.model_name = "noise_level_{}_entropy_level_{}_simul_id_{}_inputSize_{}_activation_{}_trainTask_{}".format(
+        self.actor_critic = actor_critic
+        self.model_name = "actorCritic_{}_noise_level_{}_entropy_level_{}_simul_id_{}_inputSize_{}_activation_{}_trainTask_{}".format(
+            actor_critic,
             str(self.noise_level).replace(".", "_"),
             str(self.entropy_level).replace(".", "_"),
             str(simul_id),
@@ -73,14 +76,19 @@ class RNN(nn.Module):
             self.non_linearity,
             self.training_task,
         )
-
+        
+        # Add value head
+        self.W_value = torch.nn.Parameter(torch.randn([self.num_units, 1]))
+        
     def reset_weights(self):
         with torch.no_grad():
             torch.nn.init.xavier_uniform(self.W_rec)
             torch.nn.init.xavier_uniform(self.W_in)
             self.W_out[:] = normalized_columns_initializer(self.W_out.shape, 0.01)
             self.b_rec[:] = 0
-
+            # Initialize value head weights
+            self.W_value[:] = normalized_columns_initializer(self.W_value.shape, 1.0)
+            
     def forward(self, prev_act, prev_rew, h, n_parallel):
 
         if self.input_size == 3:
@@ -117,29 +125,33 @@ class RNN(nn.Module):
                 ),
             ).to(self.device)
         h = self.f_non_linearity(h)
-        return torch.nn.Softmax(dim=1)(torch.matmul(h, self.W_out)), h
+        
+        # Get policy and value outputs
+        policy = torch.nn.Softmax(dim=1)(torch.matmul(h, self.W_out))
+        value = torch.matmul(h, self.W_value).squeeze(-1)
+        return policy, value, h
 
     def rnn(self, rewards):
         num_steps, n_parallel, _ = rewards.shape
         cum_reward = np.zeros(n_parallel)
         h = torch.zeros([n_parallel, self.num_units], device=self.device)
-        act, rew = torch.zeros(n_parallel, dtype=torch.long) - 1, torch.zeros(
-            n_parallel
-        )
+        act, rew = torch.zeros(n_parallel, dtype=torch.long) - 1, torch.zeros(n_parallel)
         observed_rewards = torch.zeros([num_steps, n_parallel])
         policies = torch.zeros_like(rewards)
+        values = torch.zeros([num_steps, n_parallel])
         chosen_actions = torch.zeros([num_steps, n_parallel], dtype=int)
+        
         for i_trial in range(rewards.size()[0]):
-            pActions, h = self.forward(act, rew, h, n_parallel)
+            pActions, value, h = self.forward(act, rew, h, n_parallel)
             act = (torch.rand(size=(n_parallel,)).to(self.device) > pActions[:, 0]) * 1
-            rew = torch.FloatTensor(
-                [rewards[i_trial, i, act[i]] for i in range(n_parallel)]
-            )
+            rew = rewards[i_trial].gather(1, act.unsqueeze(1)).squeeze()
             cum_reward += (rew.detach().numpy() + 1) / 2.0
             observed_rewards[i_trial] = rew
             chosen_actions[i_trial] = act
             policies[i_trial] = pActions
-        return cum_reward, observed_rewards, chosen_actions, policies
+            values[i_trial] = value
+            
+        return cum_reward, observed_rewards, chosen_actions, policies, values
 
     def play(self, rewards=None, train=True, plot_results=False):
         if (
@@ -175,51 +187,43 @@ class RNN(nn.Module):
                     task=self.training_task,
                 )
 
-            cum_reward, observed_rewards, chosen_actions, policies = self.rnn(rewards)
+            cum_reward, observed_rewards, chosen_actions, policies, values = self.rnn(rewards)
 
             if train:
+                # Calculate returns and advantages
                 discounted_rewards = discount(observed_rewards.numpy(), self.gamma)[:-1]
-                loss = (
-                    -sum(
-                        [
-                            torch.log(policies[i, j, chosen_actions[i, j]] + 1e-7)
-                            * discounted_rewards[i, j]
-                            for j in range(n_parallel)
-                            for i in range(num_steps)
-                        ]
-                    )
-                    / n_parallel
-                )
+                values_np = values.detach().numpy()[:-1]
+                advantages = discounted_rewards - values_np * (1. * self.actor_critic)
+                
+                # Policy (actor) loss
+                selected_probs = policies[:-1].gather(2, chosen_actions[:-1].unsqueeze(-1)).squeeze(-1)
+                policy_loss = -(torch.log(selected_probs + 1e-7) * torch.tensor(np.ascontiguousarray(advantages))).mean()
+                
+                # Value (critic) loss
+                value_loss = 0.5 * ((values[:-1] - torch.tensor(np.ascontiguousarray(discounted_rewards))) ** 2).mean()
+                
+                # Entropy loss (if enabled)
                 entropy = (torch.log(policies + 1e-7) * policies).mean()
+                
+                # Combined loss
+                loss = policy_loss + 0.5 * value_loss * (1. * self.actor_critic)
                 if self.with_entropy:
                     loss += entropy * self.entropy_level
+                
                 loss.backward()
-                # torch.nn.utils.clip_grad_value_(self.parameters(), 0.01)
                 optimizer.step()
-                writer.add_scalar("Metrics/Loss", loss, i_epoch)
+                
+                writer.add_scalar("Metrics/PolicyLoss", policy_loss, i_epoch)
+                writer.add_scalar("Metrics/ValueLoss", value_loss, i_epoch)
+                writer.add_scalar("Metrics/TotalLoss", loss, i_epoch)
                 writer.add_scalar("Metrics/Entropy", entropy, i_epoch)
-                writer.add_scalar(
-                    "Metrics/Reward", cum_reward.mean() / num_steps * 100, i_epoch
-                )
-                writer.add_scalar(
-                    "Metrics/control_reward",
-                    ((rewards + 1) / 2.0).mean(axis=0).max(axis=-1).values.mean(),
-                    i_epoch,
-                )
+                writer.add_scalar("Metrics/Reward", cum_reward.mean() / num_steps * 100, i_epoch)
+                
                 losses.append(loss.detach())
             cum_rewards.append(cum_reward.mean())
             if i_epoch % 1000 == 0 and train:
-                test_rewards = generate_task(
-                    n_parallel=n_parallel, num_steps=num_steps, task="behrens"
-                )
-                cum_reward_test, _, _, _ = self.rnn(test_rewards)
-                print("current cumulative rewards : {}".format(cum_reward_test.mean()))
-                writer.add_scalar(
-                    "Test/Restless_Reward",
-                    cum_reward_test.mean() / num_steps * 100,
-                    i_epoch,
-                )
                 torch.save(self.state_dict(), self.path_to_weights / self.model_name)
+        
         cum_rewards = torch.tensor(cum_rewards)
 
         if plot_results and train:
@@ -270,16 +274,9 @@ if __name__ == "__main__":
     try:
         run_id = int(sys.argv[1]) - 1
     except:
-        run_id = 22
+        run_id = 10
 
-    noise_levels = [
-        0,
-        # 0.2,
-        0.5,
-        # 0.8,
-        # 1.2,
-        # 1.5,
-    ]
+    noise_levels = [0.5]
 
     nb_noise_levels = len(noise_levels)
 
@@ -292,12 +289,27 @@ if __name__ == "__main__":
         nb_max_epochs=100000,
         gamma=0.5,
         simul_id=simul_id,
-        input_size=3,
+        input_size=2,
         non_linearity="tanh",
-        training_task="behrens",
+        training_task="dependent_continuous",
+        actor_critic=False,
     )
 
     cum_rewards = self.play(rewards=None, train=True, plot_results=False)
+
+    # save model
+    from scipy.io import savemat
+    dic = {}
+    dic["weights_rnn_W"] = self.W_rec.detach().numpy()
+    dic["weights_rnn_b"] = self.b_rec.detach().numpy()
+    dic["weights_input"] = self.W_in.detach().numpy()
+    dic["weights_output_policy"] = self.W_out.detach().numpy()
+    dic["weights_output_value"] = self.W_value.detach().numpy()
+    dic["regul_type"] = "white"
+    dic["regul_coeff"] = self.noise_level
+    dic["idx_simul"] = simul_id
+    savemat("/Users/csmfindling/Documents/Postdoc-Geneva/reliability_VW/theo/pytorch_conditioning/weights/weights_mat/" + self.model_name, dic)
+
 
     """
     import dask
