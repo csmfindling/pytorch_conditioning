@@ -36,6 +36,7 @@ class RNN(nn.Module):
         training_task="dependent_continuous",
         path_to_weights="weights",
         actor_critic=True,
+        two_heads_for_value=False,
     ):
         super(RNN, self).__init__()
         self.num_units = num_units
@@ -48,6 +49,7 @@ class RNN(nn.Module):
         self.W_in = torch.nn.Parameter(torch.randn([self.input_size, self.num_units]))
         self.b_rec = torch.nn.Parameter(torch.randn([self.num_units]))
         self.W_out = torch.nn.Parameter(torch.randn([self.num_units, 2]))
+        self.two_heads_for_value = two_heads_for_value
         self.noise_level = noise_level
         self.entropy_level = entropy_level
         self.training_task = training_task
@@ -63,7 +65,7 @@ class RNN(nn.Module):
         self.path_to_weights = Path(path_to_weights)
         self.path_to_weights.mkdir(exist_ok=True)
         self.actor_critic = actor_critic
-        self.model_name = "actorCritic_{}_noise_level_{}_entropy_level_{}_simul_id_{}_inputSize_{}_activation_{}_trainTask_{}".format(
+        self.model_name = "actorCritic_{}_noise_level_{}_entropy_level_{}_simul_id_{}_inputSize_{}_activation_{}_trainTask_{}_twoHeadsForValue_{}".format(
             actor_critic,
             str(self.noise_level).replace(".", "_"),
             str(self.entropy_level).replace(".", "_"),
@@ -71,10 +73,11 @@ class RNN(nn.Module):
             str(self.input_size),
             self.non_linearity,
             self.training_task,
+            self.two_heads_for_value,
         )
         
         # Add value head
-        self.W_value = torch.nn.Parameter(torch.randn([self.num_units, 1]))
+        self.W_value = torch.nn.Parameter(torch.randn([self.num_units, 1 + self.two_heads_for_value * 1]))
         
     def reset_weights(self):
         with torch.no_grad():
@@ -134,7 +137,7 @@ class RNN(nn.Module):
         act, rew = torch.zeros(n_parallel, dtype=torch.long) - 1, torch.zeros(n_parallel)
         observed_rewards = torch.zeros([num_steps, n_parallel])
         policies = torch.zeros_like(rewards)
-        values = torch.zeros([num_steps, n_parallel])
+        values = torch.zeros([num_steps, n_parallel, 1 + self.two_heads_for_value * 1])
         chosen_actions = torch.zeros([num_steps, n_parallel], dtype=int)
         
         for i_trial in range(rewards.size()[0]):
@@ -147,7 +150,7 @@ class RNN(nn.Module):
             policies[i_trial] = pActions
             values[i_trial] = value
             
-        return cum_reward, observed_rewards, chosen_actions, policies, values
+        return cum_reward, observed_rewards, chosen_actions, policies, values.squeeze(-1)
 
     def play(self, rewards=None, train=True):
         if (
@@ -187,16 +190,18 @@ class RNN(nn.Module):
 
             if train:
                 # Calculate returns and advantages
-                discounted_rewards = discount(observed_rewards.numpy(), self.gamma)[:-1]
-                values_np = values.detach().numpy()[:-1]
+                discounted_rewards = discount(observed_rewards.numpy(), self.gamma)
+                selected_values = values if not self.two_heads_for_value else values.gather(2, chosen_actions.unsqueeze(-1)).squeeze(-1)
+
+                values_np = selected_values.detach().numpy()
                 advantages = discounted_rewards - values_np * (1. * self.actor_critic)
                 
                 # Policy (actor) loss
-                selected_probs = policies[:-1].gather(2, chosen_actions[:-1].unsqueeze(-1)).squeeze(-1)
+                selected_probs = policies.gather(2, chosen_actions.unsqueeze(-1)).squeeze(-1)
                 policy_loss = -(torch.log(selected_probs + 1e-7) * torch.tensor(np.ascontiguousarray(advantages))).mean()
                 
                 # Value (critic) loss
-                value_loss = 0.5 * ((values[:-1] - torch.tensor(np.ascontiguousarray(discounted_rewards))) ** 2).mean()
+                value_loss = 0.5 * ((selected_values - torch.tensor(np.ascontiguousarray(discounted_rewards))) ** 2).mean()
                 
                 # Entropy loss (if enabled)
                 entropy = (torch.log(policies + 1e-7) * policies).mean()
@@ -261,6 +266,7 @@ if __name__ == "__main__":
         non_linearity="tanh",
         training_task="dependent_continuous",
         actor_critic=True,
+        two_heads_for_value=True,
     )
 
     cum_rewards = self.play(rewards=None, train=True)
