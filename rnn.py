@@ -26,10 +26,10 @@ class RNN(nn.Module):
         self,
         num_units=48,
         input_size=3,
-        noise_level=-1,
-        entropy_level=-1,
+        noise_level=float(-1),
+        entropy_level=float(-1),
         nb_max_epochs=1000,
-        gamma=0.5,
+        gamma=float(0.5),
         simul_id=0,
         non_linearity="tanh",
         loaded_existing_model=False,
@@ -51,6 +51,7 @@ class RNN(nn.Module):
         self.W_out = torch.nn.Parameter(torch.randn([self.num_units, 2]))
         self.two_heads_for_value = two_heads_for_value
         self.noise_level = noise_level
+        self.simul_id = simul_id
         self.entropy_level = entropy_level
         self.training_task = training_task
         self.loaded_existing_model = loaded_existing_model
@@ -65,7 +66,7 @@ class RNN(nn.Module):
         self.path_to_weights = Path(path_to_weights)
         self.path_to_weights.mkdir(exist_ok=True)
         self.actor_critic = actor_critic
-        self.model_name = "actorCritic_{}_noise_level_{}_entropy_level_{}_simul_id_{}_inputSize_{}_activation_{}_trainTask_{}_twoHeadsForValue_{}".format(
+        self.model_name = "actorCritic_{}_noise_level_{}_entropy_level_{}_simul_id_{}_inputSize_{}_activation_{}_trainTask_{}_twoHeadsForValue_{}.mat".format(
             actor_critic,
             str(self.noise_level).replace(".", "_"),
             str(self.entropy_level).replace(".", "_"),
@@ -75,10 +76,10 @@ class RNN(nn.Module):
             self.training_task,
             self.two_heads_for_value,
         )
-        
+
         # Add value head
         self.W_value = torch.nn.Parameter(torch.randn([self.num_units, 1 + self.two_heads_for_value * 1]))
-        
+
     def reset_weights(self):
         with torch.no_grad():
             torch.nn.init.xavier_uniform(self.W_rec)
@@ -87,7 +88,7 @@ class RNN(nn.Module):
             self.b_rec[:] = 0
             # Initialize value head weights
             self.W_value[:] = normalized_columns_initializer(self.W_value.shape, 1.0)
-            
+
     def forward(self, prev_act, prev_rew, h, n_parallel):
 
         if self.input_size == 3:
@@ -124,7 +125,7 @@ class RNN(nn.Module):
                 ),
             ).to(self.device)
         h = self.f_non_linearity(h)
-        
+
         # Get policy and value outputs
         policy = torch.nn.Softmax(dim=1)(torch.matmul(h, self.W_out))
         value = torch.matmul(h, self.W_value).squeeze(-1)
@@ -139,7 +140,7 @@ class RNN(nn.Module):
         policies = torch.zeros_like(rewards)
         values = torch.zeros([num_steps, n_parallel, 1 + self.two_heads_for_value * 1])
         chosen_actions = torch.zeros([num_steps, n_parallel], dtype=int)
-        
+
         for i_trial in range(rewards.size()[0]):
             pActions, value, h = self.forward(act, rew, h, n_parallel)
             act = (torch.rand(size=(n_parallel,)).to(self.device) > pActions[:, 0]) * 1
@@ -149,7 +150,7 @@ class RNN(nn.Module):
             chosen_actions[i_trial] = act
             policies[i_trial] = pActions
             values[i_trial] = value
-            
+
         return cum_reward, observed_rewards, chosen_actions, policies, values.squeeze(-1)
 
     def play(self, rewards=None, train=True):
@@ -193,36 +194,38 @@ class RNN(nn.Module):
                 discounted_rewards = discount(observed_rewards.numpy(), self.gamma)
                 selected_values = values if not self.two_heads_for_value else values.gather(2, chosen_actions.unsqueeze(-1)).squeeze(-1)
 
-                values_np = selected_values.detach().numpy()
-                advantages = discounted_rewards - values_np * (1. * self.actor_critic)
-                
+                # values_np = selected_values.detach().numpy()
+                # advantages = discounted_rewards - values_np * (1. * self.actor_critic)
+
+                advantages = discounted_rewards
+
                 # Policy (actor) loss
                 selected_probs = policies.gather(2, chosen_actions.unsqueeze(-1)).squeeze(-1)
                 policy_loss = -(torch.log(selected_probs + 1e-7) * torch.tensor(np.ascontiguousarray(advantages))).mean()
-                
+
                 # Value (critic) loss
                 value_loss = 0.5 * ((selected_values - torch.tensor(np.ascontiguousarray(discounted_rewards))) ** 2).mean()
-                
+
                 # Entropy loss (if enabled)
                 entropy = (torch.log(policies + 1e-7) * policies).mean()
-                
+
                 # Combined loss
-                loss = policy_loss + 10 * value_loss * (1. * self.actor_critic)
+                loss = policy_loss + 1 * value_loss * (1. * self.actor_critic) # 10 instead of 0.1
                 if self.with_entropy:
                     loss += entropy * self.entropy_level
-                
+
                 loss.backward()
                 optimizer.step()
-                
+
                 writer.add_scalar("Metrics/PolicyLoss", policy_loss, i_epoch)
                 writer.add_scalar("Metrics/ValueLoss", value_loss, i_epoch)
                 writer.add_scalar("Metrics/TotalLoss", loss, i_epoch)
                 writer.add_scalar("Metrics/Entropy", entropy, i_epoch)
                 writer.add_scalar("Metrics/Reward", cum_reward.mean() / num_steps * 100, i_epoch)
-                
+
                 losses.append(loss.detach())
             cum_rewards.append(cum_reward.mean())
-        
+
         cum_rewards = torch.tensor(cum_rewards)
 
         return cum_rewards if train else (cum_reward, observed_rewards, chosen_actions)
@@ -253,18 +256,16 @@ class RNN(nn.Module):
 
 if __name__ == "__main__":
     import sys
-    run_id = 2
-    noise_level = 0.5
 
     self = RNN(
         entropy_level=-1,
-        noise_level=noise_level,
-        nb_max_epochs=10000,
+        noise_level=0.5,
+        nb_max_epochs=100000,
         gamma=0.,
-        simul_id=run_id,
+        simul_id=21,
         input_size=2,
         non_linearity="tanh",
-        training_task="dependent_continuous",
+        training_task="independent_continuous",
         actor_critic=True,
         two_heads_for_value=True,
     )
@@ -281,5 +282,5 @@ if __name__ == "__main__":
     dic["weights_output_value"] = self.W_value.detach().numpy()
     dic["regul_type"] = "white"
     dic["regul_coeff"] = self.noise_level
-    dic["idx_simul"] = run_id
+    dic["idx_simul"] = self.simul_id
     savemat("/Users/vwyart/Documents/RLCOR/pytorch_conditioning/weights/" + self.model_name, dic)
