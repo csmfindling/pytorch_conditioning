@@ -37,6 +37,7 @@ class RNN(nn.Module):
         path_to_weights="weights",
         actor_critic=True,
         two_heads_for_value=False,
+        action_dependent_task=False,
     ):
         super(RNN, self).__init__()
         self.num_units = num_units
@@ -44,6 +45,7 @@ class RNN(nn.Module):
         self.with_noise = noise_level > 0
         self.with_entropy = entropy_level > 0
         self.nb_max_epochs = nb_max_epochs
+        self.action_dependent_task = action_dependent_task
         self.gamma = gamma
         self.W_rec = torch.nn.Parameter(torch.randn([self.num_units, self.num_units]))
         self.W_in = torch.nn.Parameter(torch.randn([self.input_size, self.num_units]))
@@ -66,7 +68,7 @@ class RNN(nn.Module):
         self.path_to_weights = Path(path_to_weights)
         self.path_to_weights.mkdir(exist_ok=True)
         self.actor_critic = actor_critic
-        self.model_name = "actorCritic_{}_noise_level_{}_entropy_level_{}_simul_id_{}_inputSize_{}_activation_{}_trainTask_{}_twoHeadsForValue_{}.mat".format(
+        self.model_name = "actorCritic_{}_noise_level_{}_entropy_level_{}_simul_id_{}_inputSize_{}_activation_{}_trainTask_{}_twoHeadsForValue_{}_actionDependentTask_{}.mat".format(
             actor_critic,
             str(self.noise_level).replace(".", "_"),
             str(self.entropy_level).replace(".", "_"),
@@ -75,6 +77,7 @@ class RNN(nn.Module):
             self.non_linearity,
             self.training_task,
             self.two_heads_for_value,
+            self.action_dependent_task,
         )
 
         # Add value head
@@ -144,7 +147,13 @@ class RNN(nn.Module):
         for i_trial in range(rewards.size()[0]):
             pActions, value, h = self.forward(act, rew, h, n_parallel)
             act = (torch.rand(size=(n_parallel,)).to(self.device) > pActions[:, 0]) * 1
-            rew = rewards[i_trial].gather(1, act.unsqueeze(1)).squeeze()
+            if self.action_dependent_task:
+                nb_times_chosen_arm_has_been_chosen_in_past = (chosen_actions[:i_trial] == act).sum(axis=0)
+                rew = rewards[
+                    nb_times_chosen_arm_has_been_chosen_in_past, torch.arange(n_parallel), act
+                ]
+            else:
+                rew = rewards[i_trial].gather(1, act.unsqueeze(1)).squeeze()
             cum_reward += (rew.detach().numpy() + 1) / 2.0
             observed_rewards[i_trial] = rew
             chosen_actions[i_trial] = act
@@ -262,12 +271,13 @@ if __name__ == "__main__":
         noise_level=0.5,
         nb_max_epochs=100000,
         gamma=0.,
-        simul_id=21,
+        simul_id=2,
         input_size=2,
         non_linearity="tanh",
         training_task="independent_continuous",
         actor_critic=True,
         two_heads_for_value=True,
+        action_dependent_task=True,
     )
 
     cum_rewards = self.play(rewards=None, train=True)
