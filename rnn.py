@@ -153,7 +153,7 @@ class RNN(nn.Module):
                     nb_times_chosen_arm_has_been_chosen_in_past, torch.arange(n_parallel), act
                 ]
             else:
-                rew = rewards[i_trial].gather(1, act.unsqueeze(1)).squeeze()
+                rew = rewards[i_trial].gather(1, act.unsqueeze(1)).squeeze(axis=-1)
             cum_reward += (rew.detach().numpy() + 1) / 2.0
             observed_rewards[i_trial] = rew
             chosen_actions[i_trial] = act
@@ -272,12 +272,12 @@ if __name__ == "__main__":
         nb_max_epochs=100000,
         gamma=0.,
         simul_id=2,
-        input_size=2,
+        input_size=1,
         non_linearity="tanh",
         training_task="independent_continuous",
         actor_critic=True,
         two_heads_for_value=True,
-        action_dependent_task=True,
+        action_dependent_task=False,
     )
 
     cum_rewards = self.play(rewards=None, train=True)
